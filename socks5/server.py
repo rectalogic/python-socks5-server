@@ -4,11 +4,15 @@ import select
 import socket
 import struct
 import sys
+import typing as ta
 from enum import IntEnum
 from socketserver import BaseRequestHandler, BaseServer, TCPServer, ThreadingMixIn
-import typing as ta
 
-logging.basicConfig()
+try:
+    from .idle import disable_idle_timer
+except ImportError:
+    disable_idle_timer = None
+
 log = logging.getLogger(__name__)
 
 # Constants
@@ -379,12 +383,9 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
                     return
 
 
-if __name__ == "__main__":
-    # TO-DO: Add CLI args for options
-    # Add to seperate file?
+def main():
+    if disable_idle_timer:
+        disable_idle_timer()
 
-    log.setLevel(logging.DEBUG)
-
-    # Options are completely optional
     with SOCKS5ProxyServer() as server:
         server.serve_forever()
