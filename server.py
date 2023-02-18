@@ -94,10 +94,7 @@ class SOCKS5ProxyServer(ThreadingMixIn, TCPServer):
 
 
 class SOCKS5ProxyHandler(BaseRequestHandler):
-    """The handler used for a request from a client.
-    Make sure _bind is set in self.server (like in SOCKS5ProxyServer) if a custom server uses this handler
-    in order to use binding for the request socket
-    """
+    """The handler used for a request from a client."""
 
     def __init__(
         self,
@@ -107,8 +104,8 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
         server: BaseServer,
     ):
         self.bind_address = bind_address
-        self._address_type = AddressDataType.IPv4
-        self._remote: socket.socket|None = None
+        self._address_type = AddressDataType.IPv4  # fallback
+        self._remote: socket.socket | None = None
         super().__init__(request, client_address, server)
 
     def handle(self):
