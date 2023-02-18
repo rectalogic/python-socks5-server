@@ -257,23 +257,33 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             log.info(f"Connected to {address} {port}")
 
             # Get the bind address and port
-            addr = socket.inet_ntop(af, bind_address[0])
+            addr = socket.inet_pton(af, bind_address[0])
             port = bind_address[1]
-            log.debug(f"Bind address {addr} {port}")
+            log.debug(f"Bind address {bind_address[0]} {port}")
         except Exception:
             log.exception("bind failed")
             # TO-DO: Get the actual failure code instead of giving ConnRefused each time
             self._send_failure(StatusCode.ConnRefused)
             return
 
+        if af == socket.AF_INET:
+            address_type = AddressDataType.IPv4
+            address_format = "4s"
+        elif af == socket.AF_INET6:
+            address_type = AddressDataType.IPv6
+            address_format = "16s"
+        else:
+            log.fatal("Unknown address family %d", af)
+            self._send_failure(StatusCode.ConnRefused)
+            return
         # TO-DO: Are the BND.ADDR and BND.PORT returned correct values?
         self._send(
             struct.pack(
-                "!BBBBIH",
+                f"!BBBB{address_format}H",
                 SOCKS_VERSION,
                 StatusCode.Success,
                 RESERVED,
-                AddressDataType.IPv4,
+                address_type,
                 addr,
                 port,
             )
