@@ -13,6 +13,7 @@
             ],
             "settings": {
                 "python.languageServer": "Pylance",
+                "python.analysis.typeCheckingMode": "basic",
                 "python.linting.lintOnSave": true,
                 "python.formatting.provider": "none",
                 "source.organizeImports": true,
@@ -28,7 +29,7 @@
                 }
             }
         }
-    }
+    },
 
-    // "postCreateCommand": "pip3 install --user -r requirements.txt",
+    "postCreateCommand": "pip3 install mypy"
 }
