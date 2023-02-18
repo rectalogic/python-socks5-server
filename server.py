@@ -257,7 +257,7 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             log.info(f"Connected to {address} {port}")
 
             # Get the bind address and port
-            addr = struct.unpack("!I", socket.inet_aton(bind_address[0]))[0]
+            addr = socket.inet_ntop(af, bind_address[0])
             port = bind_address[1]
             log.debug(f"Bind address {addr} {port}")
         except Exception:
