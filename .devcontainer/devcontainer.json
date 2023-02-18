@@ -1,28 +1,32 @@
 {
     "name": "Python 3",
-    "image": "mcr.microsoft.com/devcontainers/python:0-3.11",
+    "image": "python:3.11-bullseye",
     "init": true,
-    "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-python.black-formatter",
-        "charliermarsh.ruff",
-        "eamodio.gitlens"
-    ],
-    "settings": {
-        "python.languageServer": "Pylance",
-        "python.linting.lintOnSave": true,
-        "python.formatting.provider": "black",
-        "source.organizeImports": true,
-        "ruff.organizeImports": true,
-        "ruff.fixAll": false,
-        "git.ignoreLimitWarning": true,
-        "[python]": {
-            "editor.defaultFormatter": "ms-python.black-formatter",
-            "editor.formatOnSave": true,
-            "editor.codeActionsOnSave": [
-                "source.organizeImports"
-            ]
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-python.black-formatter",
+                "charliermarsh.ruff",
+                "eamodio.gitlens"
+            ],
+            "settings": {
+                "python.languageServer": "Pylance",
+                "python.linting.lintOnSave": true,
+                "python.formatting.provider": "none",
+                "source.organizeImports": true,
+                "ruff.organizeImports": true,
+                "ruff.fixAll": false,
+                "git.ignoreLimitWarning": true,
+                "[python]": {
+                    "editor.defaultFormatter": "ms-python.black-formatter",
+                    "editor.formatOnSave": true,
+                    "editor.codeActionsOnSave": [
+                        "source.organizeImports"
+                    ]
+                }
+            }
         }
     }
 

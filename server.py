@@ -1,15 +1,17 @@
+import functools
 import logging
 import select
 import socket
 import struct
-from socketserver import ThreadingMixIn, TCPServer, BaseRequestHandler
 import sys
+from enum import IntEnum
+from socketserver import BaseRequestHandler, TCPServer, ThreadingMixIn
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig()
+log = logging.getLogger(__name__)
 
 # Constants
 SOCKS_VERSION = 5
-CONNECT = 1
 RESERVED = 0
 FAILURE = 0xFF
 USERNAME_PASSWORD_VERSION = 1
@@ -30,14 +32,20 @@ CONN_PORT_SIZE = 2
 DOMAIN_SIZE = 1
 
 
-class AuthMethod:
+class SocksCommand(IntEnum):
+    CONNECT = 1
+    BIND = 2
+    UDP_ASSOCIATE = 3
+
+
+class AuthMethod(IntEnum):
     NoAuth = 0
     GSSAPI = 1
     UsernamePassword = 2
     Invalid = 0xFF
 
 
-class StatusCode:
+class StatusCode(IntEnum):
     Success = 0
     GeneralFailure = 1
     NotAllowed = 2
@@ -49,65 +57,50 @@ class StatusCode:
     AddressTypeNotSupported = 8
 
 
-class AddressDataType:
+class AddressDataType(IntEnum):
     IPv4 = 1
     DomainName = 3
     IPv6 = 4
 
 
 class SOCKS5ProxyServer(ThreadingMixIn, TCPServer):
-    """Just the server which will process a dictionary of options and initialise the socket server"""
+    """Initialise the socket server"""
 
-    def __init__(self, options):
-        options = options or {}
-        # Check types, if the options are valid
-        if "auth" in options:
-            if not isinstance(options["auth"], tuple):
-                logging.error(
-                    "Auth must be a tuple with 2 items (username, password) or not set"
-                )
-                sys.exit()
-            if len(options["auth"]) != 2:
-                logging.error("Auth must be a tuple with 2 items (username, password)")
-                sys.exit()
-            for item in options["auth"]:
-                if not isinstance(item, str):
-                    logging.error("Tuple item must be a string (type str)")
-                    sys.exit()
-            self._auth = options["auth"]
-
-        if "bind_address" in options:
+    def __init__(self, bind_address: str | None = None, port=1080, listen_ip="0.0.0.0"):
+        bind_addr = None
+        if bind_address:
             # This should error out if invalid
             # This allows us to parse the address given by a user on the start of the server
             bind_addr_info = socket.getaddrinfo(
-                options["bind_address"],
+                bind_address,
                 BIND_PORT,
                 family=socket.AF_UNSPEC,
                 type=socket.SOCK_STREAM,
                 flags=socket.AI_PASSIVE,
             )
             if len(bind_addr_info) > 0:
-                self._bind = bind_addr_info[0][4]  # Is picking first a good idea?
+                bind_addr = bind_addr_info[0][4]  # Is picking first a good idea?
             else:
-                logging.error("Failed to resolve bind address")
-                sys.exit()
+                log.fatal("Failed to resolve bind address")
+                sys.exit(1)
 
-        port = int(options["port"]) if "port" in options else 1080
-        host_port_tuple = (
-            options["listen_ip"] if "listen_ip" in options else "0.0.0.0",
-            port,
+        host_port_tuple = (listen_ip, port)
+        super().__init__(
+            host_port_tuple, functools.partial(SOCKS5ProxyHandler, bind_addr)
         )
-        super().__init__(host_port_tuple, SOCKS5ProxyHandler)
 
 
 class SOCKS5ProxyHandler(BaseRequestHandler):
     """The handler used for a request from a client.
-    Make sure _bind and _auth is set in self.server (like in SOCKS5ProxyServer) if a custom server uses this handler
-    in order to use username and password authentication or use binding for the request socket
+    Make sure _bind is set in self.server (like in SOCKS5ProxyServer) if a custom server uses this handler
+    in order to use binding for the request socket
     """
 
+    def __init__(self, bind_address: str | None = None):
+        self.bind_address = bind_address
+
     def handle(self):
-        logging.info("Accepting connection from %s:%s" % self.client_address)
+        log.info("Accepting connection from %s:%s" % self.client_address)
 
         # Handle the greeting
         # Greeting header
@@ -117,31 +110,25 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
         version, nmethods = struct.unpack("!BB", header)
         # Only accept SOCKS5
         if version != SOCKS_VERSION:
-            self._send_greeting_failure(self.auth_method)
+            self._send_greeting_failure(AuthMethod.NoAuth)
         # We need at least one method
         if nmethods < 1:
             self._send_greeting_failure(AuthMethod.Invalid)
 
         # Get available methods
         methods = self._get_available_methods(nmethods)
-        logging.debug(f"Received methods {methods}")
+        log.debug(f"Received methods {methods}")
 
         # Accept only USERNAME/PASSWORD auth if we are asking for auth
         # Accept only no auth if we are not asking for USERNAME/PASSWORD
-        if (self.auth_method and AuthMethod.UsernamePassword not in set(methods)) or (
-            not self.auth_method and AuthMethod.NoAuth not in set(methods)
-        ):
+        if AuthMethod.NoAuth not in set(methods):
             self._send_greeting_failure(AuthMethod.Invalid)
 
         # Choose an authentication method and send it to the client
-        self._send(struct.pack("!BB", SOCKS_VERSION, self.auth_method))
-
-        # If we are asking for USERNAME/PASSWORD auth verify it
-        if self.auth_method:
-            self._verify_credentials()
+        self._send(struct.pack("!BB", SOCKS_VERSION, AuthMethod.NoAuth))
 
         # Auth/greeting handled...
-        logging.debug("Successfully authenticated")
+        log.debug("Successfully authenticated")
 
         # Handle the request
         conn_buffer = self._recv(
@@ -162,12 +149,12 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
 
         if version != SOCKS_VERSION:
             self._send_failure(StatusCode.GeneralFailure)
-        if cmd != CONNECT:  # We only support connect
+        if cmd != SocksCommand.CONNECT:  # We only support connect
             self._send_failure(StatusCode.CommandNotSupported)
         if rsv != RESERVED:  # Malformed packet
             self._send_failure(StatusCode.GeneralFailure)
 
-        logging.debug(f"Handling request with address type: {address_type}")
+        log.debug(f"Handling request with address type: {address_type}")
 
         if (
             address_type == AddressDataType.IPv4 or address_type == AddressDataType.IPv6
@@ -185,9 +172,8 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             # Convert the IP address from binary to text
             try:
                 address = socket.inet_ntop(address_family, raw)
-            except Exception as err:
-                logging.debug(f"Could not convert packed IP {raw} to string")
-                logging.error(err)
+            except Exception:
+                log.exception(f"Could not convert packed IP {raw} to string")
                 self._send_failure(StatusCode.GeneralFailure)
         elif address_type == AddressDataType.DomainName:  # Domain name
             domain_buffer = self._recv(
@@ -219,8 +205,8 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             remote_info = remote_info[0]
         except (
             Exception
-        ) as err:  # There's no suitable errorcode in RFC1928 for DNS lookup failure
-            logging.error(err)
+        ):  # There's no suitable errorcode in RFC1928 for DNS lookup failure
+            log.exception("DNS lookup")
             self._send_failure(StatusCode.GeneralFailure)
 
         af, socktype, proto, _, sa = remote_info
@@ -230,18 +216,18 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             # Make the socket
             self._remote = socket.socket(af, socktype, proto)
             # Bind it to an IP
-            if hasattr(self.server, "_bind"):
-                self._remote.bind(self.server._bind)
+            if self.bind_address:
+                self._remote.bind(bind_address)
             self._remote.connect(sa)
             bind_address = self._remote.getsockname()
-            logging.info(f"Connected to {address} {port}")
+            log.info(f"Connected to {address} {port}")
 
             # Get the bind address and port
             addr = struct.unpack("!I", socket.inet_aton(bind_address[0]))[0]
             port = bind_address[1]
-            logging.debug(f"Bind address {addr} {port}")
-        except Exception as err:
-            logging.error(err)
+            log.debug(f"Bind address {addr} {port}")
+        except Exception:
+            log.exception("bind failed")
             # TO-DO: Get the actual failure code instead of giving ConnRefused each time
             self._send_failure(StatusCode.ConnRefused)
 
@@ -261,15 +247,6 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
         # Run the copy loop
         self._copy_loop(self.request, self._remote)
         self._exit(True)
-
-    @property
-    def auth_method(self):
-        """Gives us the authentication method we will use"""
-        return (
-            AuthMethod.UsernamePassword
-            if hasattr(self.server, "_auth")
-            else AuthMethod.NoAuth
-        )
 
     def _send(self, data):
         """Convenience method to send bytes to a client"""
@@ -317,51 +294,9 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             )
         return methods
 
-    def _verify_credentials(self):
-        """Verify the credentials of a client and send a response relevant response
-        and possibly close the connection + thread if unauthenticated
-        """
-        version = ord(self._recv(VERSION_SIZE))
-        if version != USERNAME_PASSWORD_VERSION:
-            logging.error(f"USERNAME_PASSWORD_VERSION did not match")
-            self._send_authentication_failure(FAILURE)
-
-        username_len = self._recv(
-            ID_LEN_SIZE, self._send_authentication_failure, FAILURE
-        )
-        username = self._recv(
-            ord(username_len), self._send_authentication_failure, FAILURE
-        )
-
-        password_len = self._recv(
-            PW_LEN_SIZE, self._send_authentication_failure, FAILURE
-        )
-        password = self._recv(
-            ord(password_len), self._send_authentication_failure, FAILURE
-        )
-
-        server_username, server_password = self.server._auth
-
-        if (
-            username.decode("utf-8") == server_username
-            and password.decode("utf-8") == server_password
-        ):
-            self._send(
-                struct.pack("!BB", USERNAME_PASSWORD_VERSION, StatusCode.Success)
-            )
-            return True
-
-        logging.error(f"Authentication failed")
-        self._send_authentication_failure(FAILURE)
-
     def _send_greeting_failure(self, code):
         """Convinence method to send a failure message to a client in the greeting stage"""
         self._send(struct.pack("!BB", SOCKS_VERSION, code))
-        self._exit()
-
-    def _send_authentication_failure(self, code):
-        """Convinence method to send a failure message to a client in the authentication stage"""
-        self._send(struct.pack("!BB", USERNAME_PASSWORD_VERSION, code))
         self._exit()
 
     def _send_failure(self, code):
@@ -393,9 +328,8 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
             for sock in r:
                 try:
                     data = sock.recv(COPY_LOOP_BUFFER_SIZE)
-                except Exception as err:
-                    logging.debug("Copy loop failed to read")
-                    logging.error(err)
+                except Exception:
+                    log.exception("Copy loop failed to read")
                     return
 
                 if not data or len(data) <= 0:
@@ -404,9 +338,8 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
                 outfd = remote if sock is client else client
                 try:
                     outfd.sendall(data)  # Python has its own sendall implemented
-                except:
-                    logging.debug("Copy loop failed to send all data")
-                    logging.error(err)
+                except Exception:
+                    log.exception("Copy loop failed to send all data")
                     return
 
 
@@ -414,13 +347,8 @@ if __name__ == "__main__":
     # TO-DO: Add CLI args for options
     # Add to seperate file?
 
+    log.setLevel(logging.DEBUG)
+
     # Options are completely optional
-    with SOCKS5ProxyServer(
-        {
-            #'auth': ("username", "password"), # default = not set
-            #'listen_ip': "0.0.0.0", # default = "0.0.0.0"
-            #'port': 1080, # default = 1080
-            #'bind_address': "0.0.0.0", # default = not set
-        }
-    ) as server:
+    with SOCKS5ProxyServer() as server:
         server.serve_forever()
