@@ -67,7 +67,7 @@ class SOCKS5ProxyServer(ThreadingMixIn, TCPServer):
     def __init__(
         self,
         bind_address: str | None = None,
-        port: int = 1080,
+        port: int = 2080,
         listen_ip: str = "0.0.0.0",
     ):
         bind_addr = None
@@ -108,6 +108,7 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
     ):
         self.bind_address = bind_address
         self._address_type = AddressDataType.IPv4
+        self._remote: socket.socket|None = None
         super().__init__(request, client_address, server)
 
     def handle(self):
@@ -306,7 +307,7 @@ class SOCKS5ProxyHandler(BaseRequestHandler):
     def _exit(self, dontExit: bool = False):
         """Convenience method to exit the thread and cleanup any connections"""
         self._shutdown_client()
-        if hasattr(self, "_remote"):
+        if self._remote:
             # self._remote.shutdown(socket.SHUT_RDWR)
             self._remote.close()
         if not dontExit:
