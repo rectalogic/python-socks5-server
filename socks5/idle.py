@@ -1,7 +1,7 @@
 # Requires pyto https://pyto.app/
 
-from UIKit import UIApplication
-import mainthread
+from UIKit import UIApplication  # type: ignore[import]
+import mainthread  # type: ignore[import]
 
 
 @mainthread.mainthread
